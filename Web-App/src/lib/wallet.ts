@@ -24,7 +24,7 @@ declare global {
 
 const tenderlyVirtualSepolia = defineChain({
   id: 99911155111,
-  name: 'Tenderly Virtual Sepolia',
+  name: 'Tenderly 虚拟 Sepolia',
   nativeCurrency: {
     decimals: 18,
     name: 'Ether',
@@ -49,7 +49,7 @@ const tenderlyVirtualSepolia = defineChain({
 
 const anvilLocal = defineChain({
   id: 31337,
-  name: 'Anvil Local',
+  name: '本地 Anvil',
   nativeCurrency: {
     decimals: 18,
     name: 'Ether',
@@ -97,7 +97,7 @@ export function hasInjectedWallet() {
 
 async function ensureConfiguredChain() {
   if (!window.ethereum) {
-    throw new Error('No injected wallet found. Install MetaMask or another EVM wallet first.')
+    throw new Error('未检测到浏览器钱包。请先安装 MetaMask 或其他 EVM 钱包。')
   }
 
   const chain = getConfiguredChain()
@@ -153,7 +153,7 @@ function buildConnection(account: Address, chain: Chain): WalletConnection {
 
 export async function connectInjectedWallet() {
   if (!window.ethereum) {
-    throw new Error('No injected wallet found. Install MetaMask or another EVM wallet first.')
+    throw new Error('未检测到浏览器钱包。请先安装 MetaMask 或其他 EVM 钱包。')
   }
 
   const chain = await ensureConfiguredChain()
@@ -162,7 +162,7 @@ export async function connectInjectedWallet() {
   })) as string[]
 
   if (!accounts.length) {
-    throw new Error('Wallet connection did not return any accounts.')
+    throw new Error('钱包连接没有返回任何账户。')
   }
 
   return buildConnection(accounts[0] as Address, chain)

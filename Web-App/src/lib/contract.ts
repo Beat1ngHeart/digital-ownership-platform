@@ -42,7 +42,7 @@ export function hasConfiguredContract() {
 
 export function readRequiredContractAddress() {
   if (!CONTRACT_ADDRESS) {
-    throw new Error('Missing VITE_CONTENT_NFT_ADDRESS in Web-App/.env.local')
+    throw new Error('请将 VITE_CONTENT_NFT_ADDRESS 设置为已部署的 ContentNFTMarketplace 合约地址。')
   }
 
   return CONTRACT_ADDRESS
@@ -58,7 +58,8 @@ export function toContentTypeIndex(value: string) {
 }
 
 export function toRoyaltyBps(value: string) {
-  return Math.round(Number(value || '0') * 100)
+  const parsed = Number(value || '0')
+  return Number.isFinite(parsed) ? Math.round(parsed * 100) : 0
 }
 
 function parseContractMetadata(value: unknown): ContractContentMetadata {
@@ -280,7 +281,7 @@ export function getMintedTokenId(receipt: TransactionReceipt) {
     }
   }
 
-  throw new Error('ContentMinted event not found in transaction receipt')
+  throw new Error('交易回执中未找到 ContentMinted 事件。')
 }
 
 export async function findRegisteredTokenIdByContentHash(publicClient: PublicClient, contentHash: Hex) {

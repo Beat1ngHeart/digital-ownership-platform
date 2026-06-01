@@ -86,6 +86,7 @@ const state: AppState = {
 const publicClient = createConfiguredPublicClient()
 const configuredChain = getConfiguredChain()
 let detachWalletListeners = () => {}
+const MAX_ROYALTY_PERCENT = 20
 
 function setNotice(tone: Notice['tone'], message: string) {
   state.notice = { tone, message }
@@ -110,11 +111,37 @@ function escapeHtml(value: string) {
     .replaceAll("'", '&#39;')
 }
 
+function parseFiniteNumber(value: string, fieldName: string) {
+  const parsed = Number(value)
+
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`${fieldName}必须是有效数字。`)
+  }
+
+  return parsed
+}
+
+function validatePublishInputs(royaltyPercent: string, listPrice: string) {
+  const royalty = parseFiniteNumber(royaltyPercent || '0', '版税')
+
+  if (royalty < 0 || royalty > MAX_ROYALTY_PERCENT) {
+    throw new Error(`版税比例必须在 0 到 ${MAX_ROYALTY_PERCENT}% 之间。`)
+  }
+
+  if (listPrice) {
+    const price = parseFiniteNumber(listPrice, '挂牌价格')
+
+    if (price <= 0) {
+      throw new Error('填写挂牌价格时，价格必须大于 0 ETH。')
+    }
+  }
+}
+
 function getConfiguredContractLabel() {
   try {
     return readRequiredContractAddress()
   } catch {
-    return 'Not configured'
+    return '未配置'
   }
 }
 
@@ -127,7 +154,7 @@ function renderAssetImage(asset: AssetRecord, title: string) {
   const images = getAssetImageUris(asset)
 
   if (!images.length) {
-    return '<div class="card__image card__image--empty">No preview</div>'
+    return '<div class="card__image card__image--empty">暂无预览</div>'
   }
 
   return `<img class="card__image" src="${escapeHtml(images[0])}" alt="${escapeHtml(
@@ -142,11 +169,11 @@ function renderNotice() {
 
 function renderAssetMeta(asset: AssetRecord) {
   return `
-    <div class="meta-row"><span>Owner</span><strong>${escapeHtml(shortenAddress(asset.owner))}</strong></div>
-    <div class="meta-row"><span>Type</span><strong>${escapeHtml(
+    <div class="meta-row"><span>持有人</span><strong>${escapeHtml(shortenAddress(asset.owner))}</strong></div>
+    <div class="meta-row"><span>类型</span><strong>${escapeHtml(
       getContentTypeLabel(asset.contractMetadata.contentType)
     )}</strong></div>
-    <div class="meta-row"><span>Minted</span><strong>${escapeHtml(
+    <div class="meta-row"><span>铸造时间</span><strong>${escapeHtml(
       formatTimestamp(asset.contractMetadata.mintedAt)
     )}</strong></div>
   `
@@ -154,13 +181,13 @@ function renderAssetMeta(asset: AssetRecord) {
 
 function renderMarketplaceCards() {
   if (!state.listedAssets.length) {
-    return '<div class="empty-state">No live listings yet. Publish the first certificate to seed the marketplace.</div>'
+    return '<div class="empty-state">当前还没有在售证书。你可以发布第一份内容来启动市场。</div>'
   }
 
   return state.listedAssets
     .map((asset) => {
-      const title = asset.metadata?.name || `Certificate #${asset.tokenId.toString()}`
-      const description = asset.metadata?.description || 'No description provided.'
+      const title = asset.metadata?.name || `证书 #${asset.tokenId.toString()}`
+      const description = asset.metadata?.description || '发布者暂未填写说明。'
       const isSeller = state.account?.toLowerCase() === asset.listing.seller.toLowerCase()
 
       return `
@@ -177,8 +204,8 @@ function renderMarketplaceCards() {
             <div class="card__actions">
               ${
                 isSeller
-                  ? `<button class="button button--secondary" data-action="cancel-listing" data-token-id="${asset.tokenId.toString()}">Cancel Listing</button>`
-                  : `<button class="button" data-action="buy" data-token-id="${asset.tokenId.toString()}" data-price="${asset.listing.price.toString()}">Buy Certificate</button>`
+                  ? `<button class="button button--secondary" data-action="cancel-listing" data-token-id="${asset.tokenId.toString()}">取消挂牌</button>`
+                  : `<button class="button" data-action="buy" data-token-id="${asset.tokenId.toString()}" data-price="${asset.listing.price.toString()}">购买证书</button>`
               }
             </div>
           </div>
@@ -190,18 +217,18 @@ function renderMarketplaceCards() {
 
 function renderLibraryCards() {
   if (!state.account) {
-    return '<div class="empty-state">Connect a wallet to see the certificates you currently own.</div>'
+    return '<div class="empty-state">连接钱包后可查看你当前持有的内容证书。</div>'
   }
 
   if (!state.ownedAssets.length) {
-    return '<div class="empty-state">This wallet does not own any certificates on the configured chain yet.</div>'
+    return '<div class="empty-state">这个钱包在当前链上还没有持有任何证书。</div>'
   }
 
   return state.ownedAssets
     .map((asset) => {
       const tokenId = asset.tokenId.toString()
       const keyValue = state.accessKeys[tokenId] || ''
-      const title = asset.metadata?.name || `Certificate #${tokenId}`
+      const title = asset.metadata?.name || `证书 #${tokenId}`
       const encryptedUri = asset.contractMetadata.encryptedContentURI
 
       return `
@@ -213,24 +240,24 @@ function renderLibraryCards() {
               <span class="pill">${escapeHtml(formatBytes(asset.metadata?.size))}</span>
             </div>
             <h3>${escapeHtml(title)}</h3>
-            <p>${escapeHtml(asset.metadata?.description || 'Encrypted source available through IPFS download.')}</p>
+            <p>${escapeHtml(asset.metadata?.description || '加密源文件可通过 IPFS 下载，并在本地解密。')}</p>
             ${renderAssetMeta(asset)}
             <div class="field">
-              <label for="access-key-${tokenId}">Access Key Package</label>
+              <label for="access-key-${tokenId}">访问密钥包</label>
               <textarea
                 id="access-key-${tokenId}"
                 class="textarea textarea--compact"
                 data-access-key-input="${tokenId}"
-                placeholder="Paste the AES-GCM access key bundle for this asset."
+                placeholder="粘贴该资产的 AES-GCM 访问密钥包。"
               >${escapeHtml(keyValue)}</textarea>
             </div>
             <div class="card__actions">
               <button class="button button--secondary" data-action="download-encrypted" data-uri="${escapeHtml(
                 encryptedUri
-              )}">Download Encrypted File</button>
+              )}">下载加密文件</button>
               <button class="button" data-action="decrypt-asset" data-token-id="${tokenId}" data-uri="${escapeHtml(
                 encryptedUri
-              )}">Decrypt and Save</button>
+              )}">解密并保存</button>
             </div>
           </div>
         </article>
@@ -256,26 +283,26 @@ function renderHistoryList(entries: SaleHistoryRecord[], emptyMessage: string) {
                 <span class="pill">Token #${entry.tokenId.toString()}</span>
                 <span class="pill pill--accent">${escapeHtml(formatEth(entry.price))}</span>
               </div>
-              <h3>Certificate Sale</h3>
-              <div class="meta-row"><span>Seller</span><strong>${escapeHtml(
+              <h3>证书交易</h3>
+              <div class="meta-row"><span>卖家</span><strong>${escapeHtml(
                 shortenAddress(entry.seller),
               )}</strong></div>
-              <div class="meta-row"><span>Buyer</span><strong>${escapeHtml(
+              <div class="meta-row"><span>买家</span><strong>${escapeHtml(
                 shortenAddress(entry.buyer),
               )}</strong></div>
-              <div class="meta-row"><span>Royalty</span><strong>${escapeHtml(
+              <div class="meta-row"><span>创作者版税</span><strong>${escapeHtml(
                 formatEth(entry.royaltyAmount),
               )}</strong></div>
-              <div class="meta-row"><span>Platform Fee</span><strong>${escapeHtml(
+              <div class="meta-row"><span>平台服务费</span><strong>${escapeHtml(
                 formatEth(entry.platformFeeAmount),
               )}</strong></div>
-              <div class="meta-row"><span>Time</span><strong>${escapeHtml(
+              <div class="meta-row"><span>成交时间</span><strong>${escapeHtml(
                 formatTimestamp(entry.timestamp),
               )}</strong></div>
               <div class="history-links">
                 ${
                   txUrl
-                    ? `<a href="${escapeHtml(txUrl)}" target="_blank" rel="noreferrer">View transaction</a>`
+                    ? `<a href="${escapeHtml(txUrl)}" target="_blank" rel="noreferrer">查看交易</a>`
                     : `<span class="mono muted">${escapeHtml(entry.txHash)}</span>`
                 }
               </div>
@@ -289,13 +316,13 @@ function renderHistoryList(entries: SaleHistoryRecord[], emptyMessage: string) {
 
 function renderHistoryPanel() {
   if (!state.saleHistory.length) {
-    return '<div class="empty-state">No completed sales have been recorded on this contract yet.</div>'
+    return '<div class="empty-state">当前合约还没有记录到已完成的交易。</div>'
   }
 
   if (!state.account) {
     return renderHistoryList(
       state.saleHistory,
-      'No completed sales have been recorded on this contract yet.',
+      '当前合约还没有记录到已完成的交易。',
     )
   }
 
@@ -308,31 +335,31 @@ function renderHistoryPanel() {
       <section class="panel panel--subtle">
         <div class="section-head">
           <div>
-            <h3>Sales As Seller</h3>
-            <p>Transfers where this wallet sold the certificate to a buyer.</p>
+            <h3>我的售出</h3>
+            <p>当前钱包作为卖家完成的证书转让。</p>
           </div>
         </div>
-        ${renderHistoryList(salesAsSeller, 'This wallet has not completed any sales yet.')}
+        ${renderHistoryList(salesAsSeller, '这个钱包还没有完成任何售出交易。')}
       </section>
 
       <section class="panel panel--subtle">
         <div class="section-head">
           <div>
-            <h3>Purchases As Buyer</h3>
-            <p>Transfers where this wallet bought the certificate from a seller.</p>
+            <h3>我的买入</h3>
+            <p>当前钱包作为买家完成的证书购买。</p>
           </div>
         </div>
-        ${renderHistoryList(purchasesAsBuyer, 'This wallet has not completed any purchases yet.')}
+        ${renderHistoryList(purchasesAsBuyer, '这个钱包还没有完成任何买入交易。')}
       </section>
 
       <section class="panel panel--subtle">
         <div class="section-head">
           <div>
-            <h3>Recent Platform Sales</h3>
-            <p>Latest sale activity across the whole contract.</p>
+            <h3>平台近期交易</h3>
+            <p>当前合约范围内最新的成交记录。</p>
           </div>
         </div>
-        ${renderHistoryList(state.saleHistory, 'No completed sales have been recorded on this contract yet.')}
+        ${renderHistoryList(state.saleHistory, '当前合约还没有记录到已完成的交易。')}
       </section>
     </div>
   `
@@ -345,33 +372,33 @@ function renderPublishResult() {
     <section class="panel panel--subtle">
       <div class="section-head">
         <div>
-          <h3>Publish Complete</h3>
-          <p>Keep the access key package safe. Without it, the encrypted source cannot be decrypted.</p>
+          <h3>发布完成</h3>
+          <p>请妥善保存访问密钥包。没有它，加密源文件无法被解密。</p>
         </div>
         <div class="inline-actions">
-          <button class="button button--secondary" data-action="copy-access-key">Copy Access Key</button>
-          <button class="button button--secondary" data-action="clear-publish-result">Hide Details</button>
+          <button class="button button--secondary" data-action="copy-access-key">复制密钥</button>
+          <button class="button button--secondary" data-action="clear-publish-result">隐藏详情</button>
         </div>
       </div>
       <div class="notice notice--success">
-        Token #${escapeHtml(state.publishResult.tokenId)} is live.
+        Token #${escapeHtml(state.publishResult.tokenId)} 已发布。
         ${
           state.publishResult.explorerUrl
-            ? `<a href="${escapeHtml(state.publishResult.explorerUrl)}" target="_blank" rel="noreferrer">View transaction</a>`
+            ? `<a href="${escapeHtml(state.publishResult.explorerUrl)}" target="_blank" rel="noreferrer">查看交易</a>`
             : `<span class="mono">${escapeHtml(state.publishResult.txHash)}</span>`
         }
       </div>
       <div class="stack">
         <div>
-          <strong>Metadata URI</strong>
+          <strong>元数据 URI</strong>
           <div class="mono muted">${escapeHtml(state.publishResult.metadataURI)}</div>
         </div>
         <div>
-          <strong>Encrypted Content URI</strong>
+          <strong>加密内容 URI</strong>
           <div class="mono muted">${escapeHtml(state.publishResult.encryptedContentURI)}</div>
         </div>
         <div>
-          <strong>Access Key Package</strong>
+          <strong>访问密钥包</strong>
           <pre class="key-box">${escapeHtml(state.publishResult.accessKey)}</pre>
         </div>
       </div>
@@ -384,24 +411,24 @@ function render() {
     <div class="shell">
       <header class="hero">
         <div class="hero__copy">
-          <span class="eyebrow">Digital Ownership Platform</span>
-          <h1>Content Certificate Market</h1>
+          <span class="eyebrow">数字内容确权平台</span>
+          <h1>内容确权市场</h1>
           <p>
-            Publish novels, images, music, and files as encrypted IPFS-backed certificates. Ownership changes onchain.
-            Access is granted through the certificate plus the offchain key package.
+            面向小说、图片、音乐、视频与创作文件的链上所有权证书平台。
+            源文件先在本地加密，所有权流转记录在链上，访问密钥由持有人妥善保管。
           </p>
         </div>
         <div class="hero__status">
           <div class="status-card">
-            <span class="status-label">Chain</span>
+            <span class="status-label">当前网络</span>
             <strong>${escapeHtml(configuredChain.name)}</strong>
-            <span class="muted">ID ${configuredChain.id}</span>
+            <span class="muted">链 ID ${configuredChain.id}</span>
           </div>
           <div class="status-card">
-            <span class="status-label">Wallet</span>
+            <span class="status-label">钱包账户</span>
             <strong>${escapeHtml(shortenAddress(state.account))}</strong>
             <button class="button ${state.account ? 'button--secondary' : ''}" data-action="connect-wallet">
-              ${state.account ? 'Reconnect Wallet' : 'Connect Wallet'}
+              ${state.account ? '重新连接' : '连接钱包'}
             </button>
           </div>
         </div>
@@ -410,20 +437,20 @@ function render() {
       ${renderNotice()}
 
       <nav class="tabs">
-        <button class="tab ${state.view === 'marketplace' ? 'tab--active' : ''}" data-action="switch-view" data-view="marketplace">Marketplace</button>
-        <button class="tab ${state.view === 'publish' ? 'tab--active' : ''}" data-action="switch-view" data-view="publish">Publish</button>
-        <button class="tab ${state.view === 'library' ? 'tab--active' : ''}" data-action="switch-view" data-view="library">My Library</button>
-        <button class="tab ${state.view === 'history' ? 'tab--active' : ''}" data-action="switch-view" data-view="history">History</button>
+        <button class="tab ${state.view === 'marketplace' ? 'tab--active' : ''}" data-action="switch-view" data-view="marketplace">市场</button>
+        <button class="tab ${state.view === 'publish' ? 'tab--active' : ''}" data-action="switch-view" data-view="publish">发布</button>
+        <button class="tab ${state.view === 'library' ? 'tab--active' : ''}" data-action="switch-view" data-view="library">我的资产</button>
+        <button class="tab ${state.view === 'history' ? 'tab--active' : ''}" data-action="switch-view" data-view="history">交易记录</button>
       </nav>
 
       <main class="page">
         <section class="panel ${state.view === 'marketplace' ? '' : 'is-hidden'}">
           <div class="section-head">
             <div>
-              <h2>Marketplace</h2>
-              <p>Live onchain listings from the current contract address.</p>
+              <h2>市场</h2>
+              <p>展示当前合约地址下正在出售的链上证书。</p>
             </div>
-            <button class="button button--secondary" data-action="refresh-marketplace">Refresh Listings</button>
+            <button class="button button--secondary" data-action="refresh-marketplace">刷新市场</button>
           </div>
           <div class="card-grid">${renderMarketplaceCards()}</div>
         </section>
@@ -431,18 +458,18 @@ function render() {
         <section class="panel ${state.view === 'publish' ? '' : 'is-hidden'}">
           <div class="section-head">
             <div>
-              <h2>Publish</h2>
-              <p>Encrypt the source locally, upload the encrypted payload to IPFS, then mint and optionally list the certificate.</p>
+              <h2>发布内容</h2>
+              <p>在浏览器本地加密源文件，上传到 IPFS 后铸造所有权证书，可选择立即挂牌。</p>
             </div>
           </div>
           <form id="publish-form" class="form-grid">
             <div class="grid-two">
               <label class="field">
-                <span>Title</span>
-                <input class="input" name="title" placeholder="Night City Chapter One" required />
+                <span>标题</span>
+                <input class="input" name="title" placeholder="例如：霓虹城第一章" required />
               </label>
               <label class="field">
-                <span>Content Type</span>
+                <span>内容类型</span>
                 <select class="input" name="contentType">
                   ${contentTypeOptions
                     .map((option, index) => `<option value="${index}">${escapeHtml(option)}</option>`)
@@ -451,38 +478,38 @@ function render() {
               </label>
             </div>
             <label class="field">
-              <span>Description</span>
-              <textarea class="textarea" name="description" placeholder="Describe what the certificate represents."></textarea>
+              <span>内容说明</span>
+              <textarea class="textarea" name="description" placeholder="描述这张证书代表的作品、授权范围或交付内容。"></textarea>
             </label>
             <div class="grid-two">
               <label class="field">
-                <span>Royalty (%)</span>
+                <span>创作者版税（%）</span>
                 <input class="input" name="royaltyPercent" type="number" min="0" max="20" step="0.1" value="10" />
               </label>
               <label class="field">
-                <span>List Price (ETH, optional)</span>
+                <span>挂牌价格（ETH，可选）</span>
                 <input class="input" name="listPrice" type="number" min="0" step="0.0001" placeholder="0.50" />
               </label>
             </div>
             <label class="field">
-              <span>License / Access Note</span>
-              <input class="input" name="license" value="certificate-owner-download" />
+              <span>授权 / 访问说明</span>
+              <input class="input" name="license" value="证书持有人下载" />
             </label>
             <div class="notice notice--info">
-              The original content hash can only be minted once on this contract. Resales should happen by transferring the existing certificate, not by re-uploading the same file.
+              同一份原始内容在当前合约中只能铸造一次。二级交易应转售同一张证书，而不是重新上传相同文件。
             </div>
             <div class="grid-two">
               <label class="field">
-                <span>Original Content File</span>
+                <span>原始内容文件</span>
                 <input class="input" name="contentFile" type="file" required />
               </label>
               <label class="field">
-                <span>Preview File (optional)</span>
+                <span>预览文件（可选）</span>
                 <input class="input" name="previewFile" type="file" />
               </label>
             </div>
             <div class="card__actions">
-              <button class="button" type="submit">Encrypt, Mint, and Publish</button>
+              <button class="button" type="submit">加密并发布证书</button>
             </div>
           </form>
           ${renderPublishResult()}
@@ -491,10 +518,10 @@ function render() {
         <section class="panel ${state.view === 'library' ? '' : 'is-hidden'}">
           <div class="section-head">
             <div>
-              <h2>My Library</h2>
-              <p>Only the current certificate owner should keep the latest access key bundle.</p>
+              <h2>我的资产</h2>
+              <p>当前证书持有人应保存最新访问密钥包，用于本地解密源文件。</p>
             </div>
-            <button class="button button--secondary" data-action="refresh-library">Refresh Library</button>
+            <button class="button button--secondary" data-action="refresh-library">刷新资产</button>
           </div>
           <div class="card-grid">${renderLibraryCards()}</div>
         </section>
@@ -502,18 +529,18 @@ function render() {
         <section class="panel ${state.view === 'history' ? '' : 'is-hidden'}">
           <div class="section-head">
             <div>
-              <h2>History</h2>
-              <p>Review completed certificate sales, including both buyer and seller addresses.</p>
+              <h2>交易记录</h2>
+              <p>查看已完成的证书交易，包括买家、卖家、版税与平台费用。</p>
             </div>
-            <button class="button button--secondary" data-action="refresh-history">Refresh History</button>
+            <button class="button button--secondary" data-action="refresh-history">刷新记录</button>
           </div>
           ${renderHistoryPanel()}
         </section>
       </main>
 
       <footer class="footer">
-        <span>${hasInjectedWallet() ? 'Injected wallet detected.' : 'No injected wallet detected yet.'}</span>
-        <span>Contract: <span class="mono">${escapeHtml(getConfiguredContractLabel())}</span></span>
+        <span>${hasInjectedWallet() ? '已检测到浏览器钱包' : '尚未检测到浏览器钱包'}</span>
+        <span>合约地址：<span class="mono">${escapeHtml(getConfiguredContractLabel())}</span></span>
       </footer>
     </div>
 
@@ -563,16 +590,16 @@ async function ensureWallet() {
 
 async function connectWallet() {
   clearNotice()
-  setBusy('Connecting wallet and switching to the configured chain...')
+  setBusy('正在连接钱包并切换到配置的网络...')
 
   try {
     const wallet = await connectInjectedWallet()
     state.wallet = wallet
     state.account = wallet.account
     await syncCurrentView()
-    setNotice('success', `Connected ${shortenAddress(wallet.account)} on ${wallet.chain.name}.`)
+    setNotice('success', `已连接 ${shortenAddress(wallet.account)}，当前网络：${wallet.chain.name}。`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Wallet connection failed.'
+    const message = error instanceof Error ? error.message : '钱包连接失败。'
     setNotice('error', message)
   } finally {
     state.busyMessage = null
@@ -590,19 +617,27 @@ async function handlePublish(form: HTMLFormElement) {
   const contentType = String(formData.get('contentType') || '0')
   const royaltyPercent = String(formData.get('royaltyPercent') || '10')
   const listPrice = String(formData.get('listPrice') || '').trim()
-  const license = String(formData.get('license') || 'certificate-owner-download').trim()
+  const license = String(formData.get('license') || '证书持有人下载').trim()
   const contentFile = formData.get('contentFile')
   const previewFile = formData.get('previewFile')
 
   if (!(contentFile instanceof File) || contentFile.size === 0) {
-    setNotice('error', 'Select the original content file before publishing.')
+    setNotice('error', '发布前请选择原始内容文件。')
+    return
+  }
+
+  try {
+    validatePublishInputs(royaltyPercent, listPrice)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '发布表单包含无效内容。'
+    setNotice('error', message)
     return
   }
 
   const wallet = await ensureWallet()
   const credentials = getPinataCredentialsFromEnv()
 
-  setBusy('Encrypting the file, uploading to IPFS, and minting the certificate...')
+  setBusy('正在加密文件、上传 IPFS 并铸造证书...')
 
   try {
     const encrypted = await encryptFile(contentFile)
@@ -610,14 +645,14 @@ async function handlePublish(form: HTMLFormElement) {
 
     if (existingTokenId !== null) {
       throw new Error(
-        `This original file is already registered as token #${existingTokenId.toString()}. Resell the existing certificate instead of minting a duplicate.`,
+        `这份原始文件已注册为 Token #${existingTokenId.toString()}。请转售已有证书，不要重复铸造。`,
       )
     }
 
     const encryptedUpload = await uploadFileToPinata(encrypted.encryptedFile, credentials)
     const previewUpload =
       previewFile instanceof File && previewFile.size > 0
-        ? await uploadFileToPinata(previewFile, credentials)
+        ? await uploadFileToPinata(previewFile, credentials, 'preview')
         : null
 
     const contentTypeLabel = contentTypeOptions[toContentTypeIndex(contentType)]
@@ -635,10 +670,10 @@ async function handlePublish(form: HTMLFormElement) {
       image: walletImage,
       external_url: typeof window !== 'undefined' ? window.location.origin : undefined,
       attributes: [
-        { trait_type: 'Content Type', value: contentTypeLabel },
-        { trait_type: 'Original Filename', value: contentFile.name },
-        { trait_type: 'MIME Type', value: contentFile.type || 'application/octet-stream' },
-        { trait_type: 'Encrypted Storage', value: 'IPFS' },
+        { trait_type: '内容类型', value: contentTypeLabel },
+        { trait_type: '原始文件名', value: contentFile.name },
+        { trait_type: 'MIME 类型', value: contentFile.type || 'application/octet-stream' },
+        { trait_type: '加密存储', value: 'IPFS' },
       ],
       assetType: contentTypeLabel,
       creator: wallet.account,
@@ -711,9 +746,9 @@ async function handlePublish(form: HTMLFormElement) {
     }
 
     form.reset()
-    setNotice('success', `Certificate #${tokenId.toString()} minted successfully.`)
+    setNotice('success', `证书 #${tokenId.toString()} 已成功铸造。`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Publishing failed.'
+    const message = error instanceof Error ? error.message : '发布失败。'
     setNotice('error', message)
   } finally {
     state.busyMessage = null
@@ -724,7 +759,7 @@ async function handlePublish(form: HTMLFormElement) {
 async function buyCertificate(tokenId: bigint, price: bigint) {
   const wallet = await ensureWallet()
 
-  setBusy(`Buying token #${tokenId.toString()}...`)
+  setBusy(`正在购买 Token #${tokenId.toString()}...`)
 
   try {
     const hash = await wallet.walletClient.writeContract({
@@ -739,9 +774,9 @@ async function buyCertificate(tokenId: bigint, price: bigint) {
 
     await publicClient.waitForTransactionReceipt({ hash })
     await Promise.all([refreshMarketplace(), refreshLibrary(), refreshHistory()])
-    setNotice('success', `Purchase complete for token #${tokenId.toString()}.`)
+    setNotice('success', `Token #${tokenId.toString()} 购买完成。`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Purchase failed.'
+    const message = error instanceof Error ? error.message : '购买失败。'
     setNotice('error', message)
   } finally {
     state.busyMessage = null
@@ -752,7 +787,7 @@ async function buyCertificate(tokenId: bigint, price: bigint) {
 async function cancelListing(tokenId: bigint) {
   const wallet = await ensureWallet()
 
-  setBusy(`Canceling listing for token #${tokenId.toString()}...`)
+  setBusy(`正在取消 Token #${tokenId.toString()} 的挂牌...`)
 
   try {
     const hash = await wallet.walletClient.writeContract({
@@ -766,9 +801,9 @@ async function cancelListing(tokenId: bigint) {
 
     await publicClient.waitForTransactionReceipt({ hash })
     await Promise.all([refreshMarketplace(), refreshLibrary()])
-    setNotice('success', `Listing canceled for token #${tokenId.toString()}.`)
+    setNotice('success', `Token #${tokenId.toString()} 已取消挂牌。`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Cancel listing failed.'
+    const message = error instanceof Error ? error.message : '取消挂牌失败。'
     setNotice('error', message)
   } finally {
     state.busyMessage = null
@@ -779,7 +814,7 @@ async function cancelListing(tokenId: bigint) {
 async function downloadEncrypted(uri: string) {
   const response = await fetch(resolveIpfsUri(uri))
   if (!response.ok) {
-    throw new Error(`Failed to download encrypted file: ${response.status}`)
+    throw new Error(`加密文件下载失败：${response.status}`)
   }
 
   const blob = await response.blob()
@@ -795,11 +830,11 @@ async function decryptAsset(tokenId: string, uri: string) {
   const accessKey = state.accessKeys[tokenId]
 
   if (!accessKey?.trim()) {
-    setNotice('error', `Paste the access key package for token #${tokenId} first.`)
+    setNotice('error', `请先粘贴 Token #${tokenId} 的访问密钥包。`)
     return
   }
 
-  setBusy(`Decrypting token #${tokenId} locally...`)
+  setBusy(`正在本地解密 Token #${tokenId}...`)
 
   try {
     const { blob, fileName } = await decryptFileFromUrl(resolveIpfsUri(uri), accessKey)
@@ -809,9 +844,9 @@ async function decryptAsset(tokenId: string, uri: string) {
     anchor.download = fileName
     anchor.click()
     URL.revokeObjectURL(objectUrl)
-    setNotice('success', `Decrypted file for token #${tokenId} is ready.`)
+    setNotice('success', `Token #${tokenId} 的文件已解密完成。`)
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Decrypt failed.'
+    const message = error instanceof Error ? error.message : '解密失败。'
     setNotice('error', message)
   } finally {
     state.busyMessage = null
@@ -843,7 +878,7 @@ root.addEventListener(
 
     const placeholder = document.createElement('div')
     placeholder.className = 'card__image card__image--empty'
-    placeholder.textContent = 'Preview unavailable'
+    placeholder.textContent = '预览不可用'
     target.replaceWith(placeholder)
   },
   true,
@@ -870,7 +905,7 @@ root.addEventListener('click', async (event) => {
       if (!view) return
       state.view = view
       clearNotice()
-      setBusy(`Loading ${view} data...`)
+      setBusy('正在加载页面数据...')
       await syncCurrentView()
       state.busyMessage = null
       render()
@@ -878,7 +913,7 @@ root.addEventListener('click', async (event) => {
     }
 
     if (action === 'refresh-marketplace') {
-      setBusy('Refreshing marketplace...')
+      setBusy('正在刷新市场...')
       await refreshMarketplace()
       state.busyMessage = null
       render()
@@ -886,7 +921,7 @@ root.addEventListener('click', async (event) => {
     }
 
     if (action === 'refresh-library') {
-      setBusy('Refreshing your library...')
+      setBusy('正在刷新我的资产...')
       await refreshLibrary()
       state.busyMessage = null
       render()
@@ -894,7 +929,7 @@ root.addEventListener('click', async (event) => {
     }
 
     if (action === 'refresh-history') {
-      setBusy('Refreshing transaction history...')
+      setBusy('正在刷新交易记录...')
       await refreshHistory()
       state.busyMessage = null
       render()
@@ -910,7 +945,7 @@ root.addEventListener('click', async (event) => {
     if (action === 'copy-access-key') {
       if (!state.publishResult) return
       await navigator.clipboard.writeText(state.publishResult.accessKey)
-      setNotice('success', 'Access key package copied to your clipboard.')
+      setNotice('success', '访问密钥包已复制到剪贴板。')
       return
     }
 
@@ -925,7 +960,7 @@ root.addEventListener('click', async (event) => {
     }
 
     if (action === 'download-encrypted') {
-      setBusy('Downloading encrypted file from IPFS...')
+      setBusy('正在从 IPFS 下载加密文件...')
       await downloadEncrypted(button.dataset.uri || '')
       state.busyMessage = null
       render()
@@ -937,7 +972,7 @@ root.addEventListener('click', async (event) => {
     }
   } catch (error) {
     state.busyMessage = null
-    const message = error instanceof Error ? error.message : 'Action failed.'
+    const message = error instanceof Error ? error.message : '操作失败。'
     setNotice('error', message)
   }
 })
@@ -973,7 +1008,7 @@ async function bootstrap() {
     state.account = state.wallet?.account || null
     await syncCurrentView()
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unable to restore wallet session.'
+    const message = error instanceof Error ? error.message : '无法恢复钱包会话。'
     state.notice = { tone: 'info', message }
   } finally {
     render()

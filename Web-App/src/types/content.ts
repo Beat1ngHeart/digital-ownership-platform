@@ -1,11 +1,11 @@
 import type { Address, Hex } from 'viem'
 
 export const contentTypeOptions = [
-  'Novel',
-  'Image',
-  'Music',
-  'Video',
-  'Other',
+  '小说',
+  '图片',
+  '音乐',
+  '视频',
+  '其他',
 ] as const
 
 export type AssetMetadata = {

@@ -97,7 +97,7 @@ export async function decryptFileFromUrl(url: string, accessKey: string) {
   const response = await fetch(url)
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch encrypted file: ${response.status}`)
+    throw new Error(`加密文件下载失败：${response.status}`)
   }
 
   const payload = new Uint8Array(await response.arrayBuffer())

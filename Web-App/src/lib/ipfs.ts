@@ -59,7 +59,7 @@ function buildPinataHeaders(credentials: PinataCredentials) {
     return headers
   }
 
-  throw new Error('Missing Pinata credentials. Configure VITE_PINATA_JWT or VITE_PINATA_KEY/VITE_PINATA_SECRET.')
+  throw new Error('缺少 Pinata 凭据。请配置 VITE_PINATA_JWT 或 VITE_PINATA_KEY/VITE_PINATA_SECRET。')
 }
 
 export function getPinataCredentialsFromEnv(): PinataCredentials {
@@ -98,7 +98,7 @@ function parseUploadResponse(payload: UploadApiResponse): IPFSUploadResult {
   const cid = normalizedPayload.IpfsHash || normalizedPayload.cid || normalizedPayload.data?.cid
 
   if (!cid) {
-    throw new Error('Pinata upload succeeded but no CID was returned.')
+    throw new Error('Pinata 上传已完成，但没有返回 CID。')
   }
 
   const gatewayBase = resolveGatewayBase()
@@ -132,19 +132,19 @@ async function requestPresignedUploadUrl(payload: PresignRequestPayload) {
     })
   } catch (error) {
     throw new Error(
-      'Pinata signing endpoint is unavailable. For local Vite development, configure VITE_PINATA_JWT. For Vercel or Cloudflare Pages, deploy the /api signer and set PINATA_JWT.',
+      'Pinata 上传签名接口不可用。本地 Vite 调试可配置 VITE_PINATA_JWT；线上部署请配置 /api 签名接口和服务端 PINATA_JWT。',
       { cause: error },
     )
   }
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`Pinata signing endpoint failed: ${response.status} ${response.statusText} - ${errorText}`)
+    throw new Error(`Pinata 签名接口失败：${response.status} ${response.statusText} - ${errorText}`)
   }
 
   const body = (await response.json()) as PresignResponsePayload
   if (!body.url) {
-    throw new Error('Pinata signing endpoint did not return a signed upload URL.')
+    throw new Error('Pinata 签名接口没有返回上传地址。')
   }
 
   return body.url
@@ -181,7 +181,7 @@ export async function uploadFileToPinata(
 
   if (!response.ok) {
     const errorText = await response.text()
-    throw new Error(`Pinata upload failed: ${response.status} ${response.statusText} - ${errorText}`)
+    throw new Error(`Pinata 上传失败：${response.status} ${response.statusText} - ${errorText}`)
   }
 
   const payload = (await response.json()) as UploadApiResponse
@@ -227,7 +227,7 @@ export async function fetchJsonFromUri<T>(uri: string): Promise<T | null> {
     try {
       const response = await fetch(url)
       if (!response.ok) {
-        throw new Error(`Failed to fetch JSON metadata from ${url}: ${response.status}`)
+        throw new Error(`读取 JSON 元数据失败：${url}，状态码 ${response.status}`)
       }
 
       return (await response.json()) as T
@@ -236,5 +236,5 @@ export async function fetchJsonFromUri<T>(uri: string): Promise<T | null> {
     }
   }
 
-  throw lastError instanceof Error ? lastError : new Error('Failed to fetch JSON metadata from IPFS.')
+  throw lastError instanceof Error ? lastError : new Error('无法从 IPFS 读取 JSON 元数据。')
 }
