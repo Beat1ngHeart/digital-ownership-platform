@@ -2,6 +2,7 @@ import {
   decodeEventLog,
   formatEther,
   isAddress,
+  parseAbiItem,
   zeroAddress,
   type Abi,
   type Address,
@@ -26,6 +27,10 @@ type ArtifactShape = {
 const contractArtifact = artifact as ArtifactShape
 
 export const CONTRACT_ABI = contractArtifact.abi
+const SALE_EVENT = parseAbiItem(
+  'event Sale(uint256 indexed tokenId, address indexed seller, address indexed buyer, uint256 price, uint256 royaltyAmount, uint256 platformFeeAmount)',
+)
+const DEFAULT_ASSET_FETCH_CONCURRENCY = 8
 
 function readConfiguredAddress() {
   const rawAddress =
@@ -86,6 +91,33 @@ function parseListing(value: unknown): Listing {
   }
 }
 
+function resolveAssetFetchConcurrency() {
+  const configured = Number(import.meta.env.VITE_ASSET_FETCH_CONCURRENCY || DEFAULT_ASSET_FETCH_CONCURRENCY)
+  if (!Number.isFinite(configured) || configured < 1) return DEFAULT_ASSET_FETCH_CONCURRENCY
+  return Math.min(Math.floor(configured), 16)
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  limit: number,
+  mapper: (value: T) => Promise<R>,
+) {
+  const results: R[] = []
+  let nextIndex = 0
+
+  async function worker() {
+    while (nextIndex < values.length) {
+      const currentIndex = nextIndex
+      nextIndex += 1
+      results[currentIndex] = await mapper(values[currentIndex])
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(limit, values.length) }, () => worker())
+  await Promise.all(workers)
+  return results
+}
+
 export async function fetchAllAssets(publicClient: PublicClient): Promise<AssetRecord[]> {
   const address = readRequiredContractAddress()
   const totalMinted = (await publicClient.readContract({
@@ -95,10 +127,17 @@ export async function fetchAllAssets(publicClient: PublicClient): Promise<AssetR
   })) as bigint
 
   if (totalMinted === 0n) return []
+  if (totalMinted > BigInt(Number.MAX_SAFE_INTEGER)) {
+    throw new Error('当前合约铸造数量超过前端可安全扫描范围，请接入索引服务。')
+  }
 
   const tokenIds = Array.from({ length: Number(totalMinted) }, (_, index) => BigInt(index + 1))
 
-  const records = await Promise.all(tokenIds.map((tokenId) => fetchAssetRecord(publicClient, tokenId)))
+  const records = await mapWithConcurrency(
+    tokenIds,
+    resolveAssetFetchConcurrency(),
+    (tokenId) => fetchAssetRecord(publicClient, tokenId),
+  )
   return records.filter((record): record is AssetRecord => Boolean(record))
 }
 
@@ -111,6 +150,7 @@ export async function fetchSaleHistory(publicClient: PublicClient): Promise<Sale
   const address = readRequiredContractAddress()
   const logs = await publicClient.getLogs({
     address,
+    event: SALE_EVENT,
     fromBlock: 0n,
     toBlock: 'latest',
   })
@@ -304,7 +344,7 @@ export async function findRegisteredTokenIdByContentHash(publicClient: PublicCli
 }
 
 export function buildExplorerTxUrl(hash: Hex) {
-  const chainId = Number(import.meta.env.VITE_CHAIN_ID || '11155111')
+  const chainId = Number(import.meta.env.VITE_CHAIN_ID || '31337')
   const configuredBase = import.meta.env.VITE_EXPLORER_TX_BASE || ''
 
   if (chainId === 31337) return `http://127.0.0.1:8545/tx/${hash}`

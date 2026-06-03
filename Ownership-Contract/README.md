@@ -34,6 +34,7 @@
 PRIVATE_KEY=0xyourprivatekey
 INITIAL_OWNER=0xYourAdminAddress
 PLATFORM_FEE_BPS=250
+ANVIL_RPC_URL=http://127.0.0.1:8545
 TENDERLY_RPC_URL=https://virtual.sepolia.eu.rpc.tenderly.co/b1bfb292-efb9-4c44-b90f-6bf3b3480dd3
 ```
 
@@ -45,7 +46,23 @@ npm run compile
 npm test
 ```
 
-## Tenderly 部署
+## Anvil 本地部署
+
+先启动 Anvil：
+
+```bash
+npm run anvil
+```
+
+另开一个终端部署合约：
+
+```bash
+npm run deploy:anvil
+```
+
+部署成功后，脚本会把本地合约地址同步到 `../Web-App/.env.local`。
+
+## Tenderly 部署（可选）
 
 ```bash
 npm run deploy:tenderly

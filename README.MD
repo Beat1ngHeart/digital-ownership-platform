@@ -18,7 +18,7 @@
 ## 当前结构
 
 ```text
-Custom_NFT-main/
+Digital-Ownership-Plantform/
 ├── Ownership-Contract/   # Hardhat 合约、测试、部署脚本
 ├── Web-App/              # 轻量前端
 └── docs/                 # 设计说明与 metadata 示例
@@ -54,7 +54,7 @@ Custom_NFT-main/
 
 ## 合约
 
-核心合约在 [ContentNFTMarketplace.sol](/Users/Zhuanz/Custom_NFT-main/Ownership-Contract/contracts/ContentNFTMarketplace.sol:10)。
+核心合约在 [ContentNFTMarketplace.sol](./Ownership-Contract/contracts/ContentNFTMarketplace.sol)。
 
 它实现了：
 
@@ -84,30 +84,52 @@ npm test
 
 ### 部署
 
+先启动本地 Anvil：
+
+```bash
+cd Ownership-Contract
+npm run anvil
+```
+
+另开一个终端部署到 Anvil：
+
 ```bash
 cd Ownership-Contract
 cp .env.example .env
-npm run deploy:tenderly
+npm run deploy:anvil
 ```
 
-当前已经内置一条 Tenderly 测试链配置：
+部署脚本会把本地合约地址自动同步到 `Web-App/.env.local`。
 
-- RPC: `https://virtual.sepolia.eu.rpc.tenderly.co/b1bfb292-efb9-4c44-b90f-6bf3b3480dd3`
-- Chain ID: `99911155111`
+当前默认使用本地 Anvil：
+
+- RPC: `http://127.0.0.1:8545`
+- Chain ID: `31337`
 
 ## 前端开发
 
 先在 `Web-App/.env.local` 里配置：
 
 ```bash
-VITE_CONTENT_NFT_ADDRESS=0xYourDeployedContract
-VITE_CHAIN_ID=99911155111
-VITE_TENDERLY_RPC_URL=https://virtual.sepolia.eu.rpc.tenderly.co/b1bfb292-efb9-4c44-b90f-6bf3b3480dd3
+VITE_CONTENT_NFT_ADDRESS=0x5FbDB2315678afecb367f032d93F642f64180aa3
+VITE_CHAIN_ID=31337
+VITE_ANVIL_RPC_URL=http://127.0.0.1:8545
+VITE_IPFS_UPLOAD_PROVIDER=local
+VITE_IPFS_GATEWAY_BASE=http://127.0.0.1:8080/ipfs
+LOCAL_IPFS_API_URL=http://127.0.0.1:5001
 ```
 
-如果只是本地 `vite` 调试上传功能，可以临时再加：
+本地 IPFS 使用 IPFS Desktop / Kubo：
+
+- 上传 API：`http://127.0.0.1:5001/api/v0/add`
+- 读取网关：`http://127.0.0.1:8080/ipfs/<CID>`
+
+前端不会直接跨域请求 Kubo API，而是通过本地 Vite 的 `/api/ipfs/add` 代理上传。
+
+如果改回 Pinata 调试上传功能，可以改成：
 
 ```bash
+VITE_IPFS_UPLOAD_PROVIDER=pinata
 VITE_PINATA_JWT=your_local_only_pinata_jwt
 ```
 
@@ -124,6 +146,12 @@ PINATA_JWT=your_server_side_pinata_jwt
 UPLOAD_ALLOWED_ORIGINS=https://your-project.vercel.app
 PINATA_MAX_FILE_BYTES=104857600
 PINATA_PRESIGN_TTL=60
+```
+
+`UPLOAD_ALLOWED_ORIGINS` 线上必须配置为你的正式前端域名。只有本地调试签名接口时，才可以临时设置：
+
+```bash
+UPLOAD_ALLOW_ANY_ORIGIN=true
 ```
 
 然后运行：

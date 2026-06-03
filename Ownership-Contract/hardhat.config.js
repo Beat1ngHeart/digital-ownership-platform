@@ -7,8 +7,14 @@ const tenderlyUrl =
 
 const privateKey = process.env.PRIVATE_KEY
 const accounts = privateKey ? [privateKey] : []
+const localAccounts = privateKey ? [privateKey] : "remote"
 const networks = {
   hardhat: {},
+  anvil: {
+    url: process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545",
+    chainId: 31337,
+    accounts: localAccounts,
+  },
   tenderlyVirtualSepolia: {
     url: tenderlyUrl,
     chainId: 99911155111,

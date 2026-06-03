@@ -2,6 +2,33 @@ const fs = require("fs")
 const path = require("path")
 const hre = require("hardhat")
 
+function upsertEnvValue(contents, key, value) {
+  const line = `${key}=${value}`
+  const pattern = new RegExp(`^${key}=.*$`, "m")
+
+  if (pattern.test(contents)) {
+    return contents.replace(pattern, line)
+  }
+
+  const separator = contents.length === 0 || contents.endsWith("\n") ? "" : "\n"
+  return `${contents}${separator}${line}\n`
+}
+
+function syncFrontendLocalEnv(deploymentInfo) {
+  if (deploymentInfo.chainId !== 31337) return
+
+  const envTarget = path.join(__dirname, "..", "..", "Web-App", ".env.local")
+  const current = fs.existsSync(envTarget) ? fs.readFileSync(envTarget, "utf8") : ""
+  const next = [
+    ["VITE_CONTENT_NFT_ADDRESS", deploymentInfo.address],
+    ["VITE_CHAIN_ID", String(deploymentInfo.chainId)],
+    ["VITE_ANVIL_RPC_URL", process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545"],
+  ].reduce((contents, [key, value]) => upsertEnvValue(contents, key, value), current)
+
+  fs.writeFileSync(envTarget, next)
+  console.log("Synced local Anvil config to ../Web-App/.env.local")
+}
+
 async function main() {
   const [deployer] = await hre.ethers.getSigners()
   if (!deployer) {
@@ -46,6 +73,7 @@ async function main() {
   )
   const artifact = await hre.artifacts.readArtifact("ContentNFTMarketplace")
   fs.writeFileSync(frontendArtifactTarget, `${JSON.stringify(artifact, null, 2)}\n`)
+  syncFrontendLocalEnv(deploymentInfo)
 
   console.log(`ContentNFTMarketplace deployed to: ${address}`)
   console.log(`Chain ID: ${deploymentInfo.chainId}`)

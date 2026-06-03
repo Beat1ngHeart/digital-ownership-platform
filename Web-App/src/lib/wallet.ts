@@ -57,7 +57,7 @@ const anvilLocal = defineChain({
   },
   rpcUrls: {
     default: {
-      http: ['http://127.0.0.1:8545'],
+      http: [import.meta.env.VITE_ANVIL_RPC_URL || 'http://127.0.0.1:8545'],
     },
   },
   blockExplorers: {
@@ -69,7 +69,7 @@ const anvilLocal = defineChain({
   testnet: true,
 })
 
-const configuredChainId = Number(import.meta.env.VITE_CHAIN_ID || '99911155111')
+const configuredChainId = Number(import.meta.env.VITE_CHAIN_ID || '31337')
 const supportedChains = [anvilLocal, sepolia, tenderlyVirtualSepolia] as const
 
 export type WalletConnection = {
@@ -80,7 +80,7 @@ export type WalletConnection = {
 }
 
 export function getConfiguredChain() {
-  return supportedChains.find((chain) => chain.id === configuredChainId) ?? tenderlyVirtualSepolia
+  return supportedChains.find((chain) => chain.id === configuredChainId) ?? anvilLocal
 }
 
 export function createConfiguredPublicClient() {

@@ -4,7 +4,9 @@
   "scripts": {
     "compile": "hardhat compile",
     "test": "hardhat test",
+    "anvil": "anvil --host 127.0.0.1 --port 8545 --chain-id 31337",
     "node": "hardhat node",
+    "deploy:anvil": "hardhat run scripts/deploy.js --network anvil",
     "deploy:tenderly": "hardhat run scripts/deploy.js --network tenderlyVirtualSepolia",
     "deploy:sepolia": "hardhat run scripts/deploy.js --network sepolia"
   },

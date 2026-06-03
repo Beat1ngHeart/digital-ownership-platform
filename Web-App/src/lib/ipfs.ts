@@ -12,16 +12,20 @@ export type IPFSUploadResult = {
 
 const PINATA_FILE_URL = 'https://uploads.pinata.cloud/v3/files'
 const DEFAULT_GATEWAY_BASE = 'https://gateway.pinata.cloud/ipfs'
+const LOCAL_GATEWAY_BASE = 'http://127.0.0.1:8080/ipfs'
 const FALLBACK_GATEWAY_BASES = [
+  'http://127.0.0.1:8080/ipfs',
   'https://gateway.pinata.cloud/ipfs',
   'https://cloudflare-ipfs.com/ipfs',
   'https://ipfs.io/ipfs',
   'https://dweb.link/ipfs',
 ]
 const PRESIGN_ENDPOINT = import.meta.env.VITE_PINATA_PRESIGN_ENDPOINT || '/api/pinata/presign'
+const LOCAL_IPFS_UPLOAD_ENDPOINT = import.meta.env.VITE_LOCAL_IPFS_UPLOAD_ENDPOINT || '/api/ipfs/add'
 
 type UploadKind = 'content' | 'preview' | 'metadata'
 type UploadNetwork = 'public' | 'private'
+type UploadProvider = 'pinata' | 'local'
 
 type PresignRequestPayload = {
   fileName: string
@@ -37,6 +41,7 @@ type PresignResponsePayload = {
 type UploadApiResponse =
   | {
       IpfsHash?: string
+      Hash?: string
     }
   | {
       cid?: string
@@ -62,6 +67,12 @@ function buildPinataHeaders(credentials: PinataCredentials) {
   throw new Error('缺少 Pinata 凭据。请配置 VITE_PINATA_JWT 或 VITE_PINATA_KEY/VITE_PINATA_SECRET。')
 }
 
+function resolveUploadProvider(): UploadProvider {
+  return String(import.meta.env.VITE_IPFS_UPLOAD_PROVIDER || '').trim().toLowerCase() === 'local'
+    ? 'local'
+    : 'pinata'
+}
+
 export function getPinataCredentialsFromEnv(): PinataCredentials {
   const jwt = import.meta.env.VITE_PINATA_JWT
   const key = import.meta.env.VITE_PINATA_KEY
@@ -79,7 +90,9 @@ export function hasPinataCredentials(credentials: PinataCredentials) {
 }
 
 function resolveGatewayBase() {
-  const configured = import.meta.env.VITE_IPFS_GATEWAY_BASE || DEFAULT_GATEWAY_BASE
+  const configured =
+    import.meta.env.VITE_IPFS_GATEWAY_BASE ||
+    (resolveUploadProvider() === 'local' ? LOCAL_GATEWAY_BASE : DEFAULT_GATEWAY_BASE)
   return configured.endsWith('/') ? configured.slice(0, -1) : configured
 }
 
@@ -90,15 +103,20 @@ function uniqueValues(values: string[]) {
 function parseUploadResponse(payload: UploadApiResponse): IPFSUploadResult {
   const normalizedPayload = payload as {
     IpfsHash?: string
+    Hash?: string
     cid?: string
     data?: {
       cid?: string
     }
   }
-  const cid = normalizedPayload.IpfsHash || normalizedPayload.cid || normalizedPayload.data?.cid
+  const cid =
+    normalizedPayload.IpfsHash ||
+    normalizedPayload.Hash ||
+    normalizedPayload.cid ||
+    normalizedPayload.data?.cid
 
   if (!cid) {
-    throw new Error('Pinata 上传已完成，但没有返回 CID。')
+    throw new Error('IPFS 上传已完成，但没有返回 CID。')
   }
 
   const gatewayBase = resolveGatewayBase()
@@ -150,11 +168,33 @@ async function requestPresignedUploadUrl(payload: PresignRequestPayload) {
   return body.url
 }
 
+async function uploadFileToLocalIpfs(file: File): Promise<IPFSUploadResult> {
+  const formData = new FormData()
+  formData.append('file', file, file.name)
+
+  const response = await fetch(LOCAL_IPFS_UPLOAD_ENDPOINT, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const errorText = await response.text()
+    throw new Error(`本地 IPFS 上传失败：${response.status} ${response.statusText} - ${errorText}`)
+  }
+
+  const payload = (await response.json()) as UploadApiResponse
+  return parseUploadResponse(payload)
+}
+
 export async function uploadFileToPinata(
   file: File,
   credentials: PinataCredentials,
   kind: UploadKind = 'content',
 ): Promise<IPFSUploadResult> {
+  if (resolveUploadProvider() === 'local') {
+    return uploadFileToLocalIpfs(file)
+  }
+
   const useDirectClientCredentials = hasPinataCredentials(credentials)
   const headers = useDirectClientCredentials ? buildPinataHeaders(credentials) : {}
   const formData = new FormData()

@@ -37,6 +37,7 @@ type ViewName = 'marketplace' | 'publish' | 'library' | 'history'
 
 type PublishResult = {
   tokenId: string
+  contractAddress: string
   metadataURI: string
   encryptedContentURI: string
   accessKey: string
@@ -376,6 +377,7 @@ function renderPublishResult() {
           <p>请妥善保存访问密钥包。没有它，加密源文件无法被解密。</p>
         </div>
         <div class="inline-actions">
+          <button class="button" data-action="add-nft-to-wallet">添加到 MetaMask</button>
           <button class="button button--secondary" data-action="copy-access-key">复制密钥</button>
           <button class="button button--secondary" data-action="clear-publish-result">隐藏详情</button>
         </div>
@@ -389,6 +391,14 @@ function renderPublishResult() {
         }
       </div>
       <div class="stack">
+        <div>
+          <strong>合约地址</strong>
+          <div class="mono muted">${escapeHtml(state.publishResult.contractAddress)}</div>
+        </div>
+        <div>
+          <strong>Token ID</strong>
+          <div class="mono muted">${escapeHtml(state.publishResult.tokenId)}</div>
+        </div>
         <div>
           <strong>元数据 URI</strong>
           <div class="mono muted">${escapeHtml(state.publishResult.metadataURI)}</div>
@@ -738,6 +748,7 @@ async function handlePublish(form: HTMLFormElement) {
 
     state.publishResult = {
       tokenId: tokenId.toString(),
+      contractAddress,
       metadataURI: metadataUpload.ipfsUri,
       encryptedContentURI: encryptedUpload.ipfsUri,
       accessKey: encrypted.accessKey,
@@ -809,6 +820,36 @@ async function cancelListing(tokenId: bigint) {
     state.busyMessage = null
     render()
   }
+}
+
+async function addPublishedNftToWallet() {
+  if (!state.publishResult) return
+  if (!window.ethereum) {
+    throw new Error('未检测到浏览器钱包。请先安装或打开 MetaMask。')
+  }
+
+  await ensureWallet()
+
+  const contractAddress = readRequiredContractAddress()
+  const wasAdded = await window.ethereum.request({
+    method: 'wallet_watchAsset',
+    params: [
+      {
+        type: 'ERC721',
+        options: {
+          address: contractAddress,
+          tokenId: state.publishResult.tokenId,
+        },
+      },
+    ],
+  })
+
+  if (wasAdded) {
+    setNotice('success', `已请求 MetaMask 添加 Token #${state.publishResult.tokenId}。`)
+    return
+  }
+
+  setNotice('info', 'MetaMask 未确认添加该 NFT。你也可以在钱包里手动导入合约地址和 Token ID。')
 }
 
 async function downloadEncrypted(uri: string) {
@@ -946,6 +987,11 @@ root.addEventListener('click', async (event) => {
       if (!state.publishResult) return
       await navigator.clipboard.writeText(state.publishResult.accessKey)
       setNotice('success', '访问密钥包已复制到剪贴板。')
+      return
+    }
+
+    if (action === 'add-nft-to-wallet') {
+      await addPublishedNftToWallet()
       return
     }
 
