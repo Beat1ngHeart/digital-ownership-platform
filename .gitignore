@@ -17,10 +17,17 @@ Ownership-Contract/deployments
 Web-App/.vite
 Web-App/dist
 
+# Thesis output (generated documents, ~33 MB)
+thesis-output/
+
+# SSH keys (never commit)
+github_pat_*
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
+.cursor
 .DS_Store
 *.suo
 *.ntvs*

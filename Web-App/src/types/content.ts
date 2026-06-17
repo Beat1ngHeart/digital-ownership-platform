@@ -39,6 +39,8 @@ export type ContractContentMetadata = {
   encryptedContentURI: string
   previewURI: string
   contentHash: Hex
+  encryptedAccessKey: string
+  perceptualHash: bigint
 }
 
 export type Listing = {

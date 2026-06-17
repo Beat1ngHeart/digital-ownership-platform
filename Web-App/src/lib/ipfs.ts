@@ -213,19 +213,38 @@ export async function uploadFileToPinata(
         kind,
       })
 
-  const response = await fetch(uploadEndpoint, {
-    method: 'POST',
-    headers,
-    body: formData,
-  })
+  const timeoutMs = kind === 'content' ? 120_000 : 30_000
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Pinata 上传失败：${response.status} ${response.statusText} - ${errorText}`)
+  console.log(`[IPFS] 开始上传 ${file.name} (${(file.size / 1024).toFixed(1)} KB) 到 ${uploadEndpoint}`)
+
+  try {
+    const response = await fetch(uploadEndpoint, {
+      method: 'POST',
+      headers,
+      body: formData,
+      signal: controller.signal,
+    })
+
+    console.log(`[IPFS] 响应状态: ${response.status}`)
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Pinata 上传失败：${response.status} ${response.statusText} - ${errorText}`)
+    }
+
+    const payload = (await response.json()) as UploadApiResponse
+    return parseUploadResponse(payload)
+  } catch (error) {
+    console.error('[IPFS] 上传失败:', error)
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`Pinata 上传超时（${timeoutMs / 1000}秒）。请检查网络连接或文件大小。`)
+    }
+    throw error
+  } finally {
+    clearTimeout(timer)
   }
-
-  const payload = (await response.json()) as UploadApiResponse
-  return parseUploadResponse(payload)
 }
 
 export async function uploadJsonToPinata(

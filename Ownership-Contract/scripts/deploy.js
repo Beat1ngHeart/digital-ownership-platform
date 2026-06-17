@@ -15,18 +15,26 @@ function upsertEnvValue(contents, key, value) {
 }
 
 function syncFrontendLocalEnv(deploymentInfo) {
-  if (deploymentInfo.chainId !== 31337) return
-
   const envTarget = path.join(__dirname, "..", "..", "Web-App", ".env.local")
   const current = fs.existsSync(envTarget) ? fs.readFileSync(envTarget, "utf8") : ""
-  const next = [
+
+  let pairs = [
     ["VITE_CONTENT_NFT_ADDRESS", deploymentInfo.address],
     ["VITE_CHAIN_ID", String(deploymentInfo.chainId)],
-    ["VITE_ANVIL_RPC_URL", process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545"],
-  ].reduce((contents, [key, value]) => upsertEnvValue(contents, key, value), current)
+  ]
+
+  if (deploymentInfo.chainId === 31337) {
+    pairs.push(["VITE_ANVIL_RPC_URL", process.env.ANVIL_RPC_URL || "http://127.0.0.1:8545"])
+    pairs.push(["VITE_IPFS_UPLOAD_PROVIDER", "local"])
+    pairs.push(["VITE_IPFS_GATEWAY_BASE", "http://127.0.0.1:8080/ipfs"])
+  } else {
+    pairs.push(["VITE_TENDERLY_RPC_URL", process.env.TENDERLY_RPC_URL || ""])
+  }
+
+  const next = pairs.reduce((contents, [key, value]) => upsertEnvValue(contents, key, value), current)
 
   fs.writeFileSync(envTarget, next)
-  console.log("Synced local Anvil config to ../Web-App/.env.local")
+  console.log(`Synced config to ../Web-App/.env.local (chain ${deploymentInfo.chainId})`)
 }
 
 async function main() {

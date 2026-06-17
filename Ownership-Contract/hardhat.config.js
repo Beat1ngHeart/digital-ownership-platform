@@ -3,7 +3,9 @@ require("@nomicfoundation/hardhat-toolbox")
 
 const tenderlyUrl =
   process.env.TENDERLY_RPC_URL ||
-  "https://virtual.sepolia.eu.rpc.tenderly.co/b1bfb292-efb9-4c44-b90f-6bf3b3480dd3"
+  "https://virtual.mainnet.eu.rpc.tenderly.co/beat1ngheart/project/65d04c-234be9"
+
+const tenderlyChainId = Number(process.env.TENDERLY_CHAIN_ID || "29840272360")
 
 const privateKey = process.env.PRIVATE_KEY
 const accounts = privateKey ? [privateKey] : []
@@ -15,9 +17,9 @@ const networks = {
     chainId: 31337,
     accounts: localAccounts,
   },
-  tenderlyVirtualSepolia: {
+  tenderly: {
     url: tenderlyUrl,
-    chainId: 99911155111,
+    chainId: tenderlyChainId,
     accounts,
   },
 }
@@ -35,6 +37,7 @@ module.exports = {
     version: "0.8.24",
     settings: {
       evmVersion: "cancun",
+      viaIR: true,
       optimizer: {
         enabled: true,
         runs: 200,

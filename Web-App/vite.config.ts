@@ -192,6 +192,15 @@ export default defineConfig(({ mode }) => {
               return
             }
 
+            // Also copy into MFS so IPFS Desktop "Files" tab can display it
+            try {
+              const mfsPath = `/数字内容平台/${cid}`
+              const cpUrl = `${ipfsApiBase}/api/v0/files/cp?arg=${encodeURIComponent(`/ipfs/${cid}`)}&arg=${encodeURIComponent(mfsPath)}&parents=true`
+              await fetch(cpUrl, { method: 'POST' })
+            } catch {
+              // Non-fatal: file is still pinned even if MFS copy fails
+            }
+
             sendJson(response, 200, {
               cid,
               Hash: cid,

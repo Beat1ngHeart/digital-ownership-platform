@@ -78,6 +78,8 @@ function parseContractMetadata(value: unknown): ContractContentMetadata {
     encryptedContentURI: metadata.encryptedContentURI,
     previewURI: metadata.previewURI,
     contentHash: metadata.contentHash,
+    encryptedAccessKey: metadata.encryptedAccessKey || '',
+    perceptualHash: BigInt(metadata.perceptualHash || 0),
   }
 }
 
@@ -146,13 +148,19 @@ export async function fetchListedAssets(publicClient: PublicClient) {
   return allAssets.filter((asset) => asset.listing.isActive)
 }
 
+const saleHistoryCache: Map<string, SaleHistoryRecord> = new Map()
+
 export async function fetchSaleHistory(publicClient: PublicClient): Promise<SaleHistoryRecord[]> {
   const address = readRequiredContractAddress()
+  const latestBlock = await publicClient.getBlockNumber()
+  const toBlock = latestBlock
+  const fromBlock = latestBlock >= 10n ? latestBlock - 9n : 0n
+
   const logs = await publicClient.getLogs({
     address,
     event: SALE_EVENT,
-    fromBlock: 0n,
-    toBlock: 'latest',
+    fromBlock,
+    toBlock,
   })
 
   const decodedSales = logs
@@ -211,7 +219,10 @@ export async function fetchSaleHistory(publicClient: PublicClient): Promise<Sale
       } => Boolean(entry),
     )
 
-  if (!decodedSales.length) return []
+  if (!decodedSales.length) {
+    return Array.from(saleHistoryCache.values())
+      .sort((a, b) => Number(b.blockNumber - a.blockNumber))
+  }
 
   const uniqueBlockNumbers = Array.from(
     new Set(decodedSales.map((entry) => entry.blockNumber.toString())),
@@ -227,7 +238,7 @@ export async function fetchSaleHistory(publicClient: PublicClient): Promise<Sale
 
   const timestamps = new Map(blocks)
 
-  return decodedSales
+  const newResults = decodedSales
     .map(({ logIndex: _logIndex, ...entry }) => ({
       ...entry,
       timestamp: timestamps.get(entry.blockNumber.toString()) || 0n,
@@ -241,6 +252,14 @@ export async function fetchSaleHistory(publicClient: PublicClient): Promise<Sale
       return Number(right.blockNumber - left.blockNumber)
     })
     .map(({ _sortIndex: _unused, ...entry }) => entry)
+
+  // Merge new results into cache
+  for (const entry of newResults) {
+    saleHistoryCache.set(entry.txHash, entry)
+  }
+
+  return Array.from(saleHistoryCache.values())
+    .sort((a, b) => Number(b.blockNumber - a.blockNumber))
 }
 
 export async function fetchOwnedAssets(publicClient: PublicClient, ownerAddress: Address) {

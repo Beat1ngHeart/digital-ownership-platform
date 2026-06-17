@@ -12,7 +12,7 @@ import {
   toRoyaltyBps,
 } from './lib/contract'
 import { decryptFileFromUrl, encryptFile } from './lib/crypto'
-import { formatBytes, formatEth, formatTimestamp, getContentTypeLabel, shortenAddress } from './lib/format'
+import { formatEth, formatTimestamp, getContentTypeLabel, shortenAddress } from './lib/format'
 import {
   getPinataCredentialsFromEnv,
   resolveIpfsUri,
@@ -21,6 +21,7 @@ import {
   uploadJsonToPinata,
 } from './lib/ipfs'
 import { buildCertificateImageDataUri } from './lib/metadata'
+import { computePHash } from './lib/phash'
 import {
   attachWalletListeners,
   connectInjectedWallet,
@@ -57,6 +58,7 @@ type AppState = {
   listedAssets: AssetRecord[]
   ownedAssets: AssetRecord[]
   saleHistory: SaleHistoryRecord[]
+  pendingWithdrawal: bigint
   accessKeys: Record<string, string>
   publishResult: PublishResult | null
   notice: Notice | null
@@ -78,6 +80,7 @@ const state: AppState = {
   listedAssets: [],
   ownedAssets: [],
   saleHistory: [],
+  pendingWithdrawal: 0n,
   accessKeys: {},
   publishResult: null,
   notice: null,
@@ -228,9 +231,12 @@ function renderLibraryCards() {
   return state.ownedAssets
     .map((asset) => {
       const tokenId = asset.tokenId.toString()
+      const onChainKey = asset.contractMetadata.encryptedAccessKey || ''
       const keyValue = state.accessKeys[tokenId] || ''
       const title = asset.metadata?.name || `证书 #${tokenId}`
       const encryptedUri = asset.contractMetadata.encryptedContentURI
+      const isAutoLoaded = onChainKey && keyValue === onChainKey
+      const isListed = asset.listing.isActive
 
       return `
         <article class="card card--library">
@@ -238,7 +244,7 @@ function renderLibraryCards() {
           <div class="card__body">
             <div class="card__topline">
               <span class="pill">Token #${tokenId}</span>
-              <span class="pill">${escapeHtml(formatBytes(asset.metadata?.size))}</span>
+              ${isListed ? `<span class="pill pill--accent">${escapeHtml(formatEth(asset.listing.price))} 在售</span>` : ''}
             </div>
             <h3>${escapeHtml(title)}</h3>
             <p>${escapeHtml(asset.metadata?.description || '加密源文件可通过 IPFS 下载，并在本地解密。')}</p>
@@ -251,6 +257,7 @@ function renderLibraryCards() {
                 data-access-key-input="${tokenId}"
                 placeholder="粘贴该资产的 AES-GCM 访问密钥包。"
               >${escapeHtml(keyValue)}</textarea>
+              ${isAutoLoaded ? '<span class="muted" style="font-size:0.85em">已从合约自动加载</span>' : ''}
             </div>
             <div class="card__actions">
               <button class="button button--secondary" data-action="download-encrypted" data-uri="${escapeHtml(
@@ -259,6 +266,14 @@ function renderLibraryCards() {
               <button class="button" data-action="decrypt-asset" data-token-id="${tokenId}" data-uri="${escapeHtml(
                 encryptedUri
               )}">解密并保存</button>
+              ${isListed
+                ? `<button class="button button--secondary" data-action="cancel-listing" data-token-id="${tokenId}">取消挂牌</button>`
+                : `<button class="button button--secondary" data-action="relist-token" data-token-id="${tokenId}">重新上架</button>`
+              }
+              ${!isListed
+                ? `<button class="button button--danger" data-action="burn-token" data-token-id="${tokenId}">销毁证书</button>`
+                : ''
+              }
             </div>
           </div>
         </article>
@@ -333,6 +348,21 @@ function renderHistoryPanel() {
 
   return `
     <div class="history-sections">
+      ${state.pendingWithdrawal > 0n ? `
+      <section class="panel panel--subtle">
+        <div class="section-head">
+          <div>
+            <h3>待提取收益</h3>
+            <p>来自已售出证书的收入，需要手动提取到钱包。</p>
+          </div>
+          <div class="inline-actions">
+            <span class="pill pill--accent">${escapeHtml(formatEth(state.pendingWithdrawal))}</span>
+            <button class="button" data-action="withdraw">提取到钱包</button>
+          </div>
+        </div>
+      </section>
+      ` : ''}
+
       <section class="panel panel--subtle">
         <div class="section-head">
           <div>
@@ -377,7 +407,6 @@ function renderPublishResult() {
           <p>请妥善保存访问密钥包。没有它，加密源文件无法被解密。</p>
         </div>
         <div class="inline-actions">
-          <button class="button" data-action="add-nft-to-wallet">添加到 MetaMask</button>
           <button class="button button--secondary" data-action="copy-access-key">复制密钥</button>
           <button class="button button--secondary" data-action="clear-publish-result">隐藏详情</button>
         </div>
@@ -565,14 +594,68 @@ async function refreshMarketplace() {
 async function refreshLibrary() {
   if (!state.account) {
     state.ownedAssets = []
+    state.accessKeys = {}
     return
   }
 
   state.ownedAssets = await fetchOwnedAssets(publicClient, state.account)
+
+  for (const asset of state.ownedAssets) {
+    const tokenId = asset.tokenId.toString()
+    const onChainKey = asset.contractMetadata.encryptedAccessKey
+    if (onChainKey && !state.accessKeys[tokenId]) {
+      state.accessKeys[tokenId] = onChainKey
+    }
+  }
 }
 
 async function refreshHistory() {
   state.saleHistory = await fetchSaleHistory(publicClient)
+  await refreshPendingWithdrawal()
+}
+
+async function refreshPendingWithdrawal() {
+  if (!state.account) {
+    state.pendingWithdrawal = 0n
+    return
+  }
+  const address = readRequiredContractAddress()
+  state.pendingWithdrawal = (await publicClient.readContract({
+    address,
+    abi: CONTRACT_ABI,
+    functionName: 'pendingWithdrawals',
+    args: [state.account],
+  })) as bigint
+}
+
+async function withdrawBalance() {
+  const wallet = await ensureWallet()
+
+  if (state.pendingWithdrawal === 0n) {
+    setNotice('info', '当前没有可提取的收益。')
+    return
+  }
+
+  setBusy('正在提取收益...')
+  try {
+    const hash = await wallet.walletClient.writeContract({
+      account: wallet.account,
+      chain: wallet.chain,
+      address: readRequiredContractAddress(),
+      abi: CONTRACT_ABI,
+      functionName: 'withdraw',
+      args: [],
+    })
+    await publicClient.waitForTransactionReceipt({ hash })
+    await refreshPendingWithdrawal()
+    setNotice('success', `收益已提取到钱包。`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '提取失败。'
+    setNotice('error', message)
+  } finally {
+    state.busyMessage = null
+    render()
+  }
 }
 
 async function syncCurrentView() {
@@ -651,6 +734,7 @@ async function handlePublish(form: HTMLFormElement) {
 
   try {
     const encrypted = await encryptFile(contentFile)
+    setBusy('正在检查链上记录...')
     const existingTokenId = await findRegisteredTokenIdByContentHash(publicClient, encrypted.contentHash)
 
     if (existingTokenId !== null) {
@@ -659,6 +743,14 @@ async function handlePublish(form: HTMLFormElement) {
       )
     }
 
+    // Compute perceptual hash (reads 128 bytes, instant)
+    let perceptualHash = 0n
+    const isImage = contentFile.type.startsWith('image/')
+    if (isImage) {
+      perceptualHash = await computePHash(contentFile)
+    }
+
+    setBusy(`正在上传加密文件到 IPFS（${(encrypted.encryptedFile.size / 1024 / 1024).toFixed(1)} MB）...`)
     const encryptedUpload = await uploadFileToPinata(encrypted.encryptedFile, credentials)
     const previewUpload =
       previewFile instanceof File && previewFile.size > 0
@@ -677,7 +769,7 @@ async function handlePublish(form: HTMLFormElement) {
     const metadata = {
       name: title || contentFile.name,
       description,
-      image: walletImage,
+      image: resolveIpfsUri(walletImage),
       external_url: typeof window !== 'undefined' ? window.location.origin : undefined,
       attributes: [
         { trait_type: '内容类型', value: contentTypeLabel },
@@ -701,6 +793,18 @@ async function handlePublish(form: HTMLFormElement) {
 
     const metadataUpload = await uploadJsonToPinata(metadata, credentials, 'content-metadata.json')
     const contractAddress = readRequiredContractAddress()
+
+    console.log('[MINT] 准备发送铸造交易...', {
+      contract: contractAddress,
+      chain: wallet.chain.id,
+      account: wallet.account,
+      contentHash: encrypted.contentHash,
+      contentType: toContentTypeIndex(contentType),
+      royaltyBps: toRoyaltyBps(royaltyPercent),
+      perceptualHash: perceptualHash.toString(),
+    })
+
+    setBusy('正在等待 MetaMask 确认铸造交易...')
     const mintHash = await wallet.walletClient.writeContract({
       account: wallet.account,
       chain: wallet.chain,
@@ -714,10 +818,15 @@ async function handlePublish(form: HTMLFormElement) {
         encrypted.contentHash,
         toContentTypeIndex(contentType),
         toRoyaltyBps(royaltyPercent),
+        encrypted.accessKey,
+        perceptualHash,
       ],
     })
 
+    console.log('[MINT] 交易已提交:', mintHash)
+    setBusy('正在等待链上确认...')
     const mintReceipt = await publicClient.waitForTransactionReceipt({ hash: mintHash })
+    console.log('[MINT] 交易确认:', mintReceipt.status)
     const tokenId = getMintedTokenId(mintReceipt)
 
     if (listPrice) {
@@ -758,7 +867,9 @@ async function handlePublish(form: HTMLFormElement) {
 
     form.reset()
     setNotice('success', `证书 #${tokenId.toString()} 已成功铸造。`)
+    void addNftToWallet(contractAddress, tokenId.toString())
   } catch (error) {
+    console.error('[MINT] 铸造失败:', error)
     const message = error instanceof Error ? error.message : '发布失败。'
     setNotice('error', message)
   } finally {
@@ -769,30 +880,61 @@ async function handlePublish(form: HTMLFormElement) {
 
 async function buyCertificate(tokenId: bigint, price: bigint) {
   const wallet = await ensureWallet()
+  const contractAddress = readRequiredContractAddress()
+  const contractArgs = {
+    account: wallet.account,
+    chain: wallet.chain,
+    address: contractAddress,
+    abi: CONTRACT_ABI,
+    functionName: 'buy' as const,
+    args: [tokenId],
+    value: price,
+  }
 
   setBusy(`正在购买 Token #${tokenId.toString()}...`)
 
   try {
-    const hash = await wallet.walletClient.writeContract({
-      account: wallet.account,
-      chain: wallet.chain,
-      address: readRequiredContractAddress(),
-      abi: CONTRACT_ABI,
-      functionName: 'buy',
-      args: [tokenId],
-      value: price,
-    })
+    // Pre-flight simulation: catches contract reverts before sending the transaction.
+    await wallet.publicClient.simulateContract(contractArgs)
 
-    await publicClient.waitForTransactionReceipt({ hash })
+    const hash = await wallet.walletClient.writeContract(contractArgs)
+    const receipt = await publicClient.waitForTransactionReceipt({ hash })
+
+    if (receipt.status === 'reverted') {
+      throw new Error('链上交易执行失败（reverted）。请在区块浏览器中查看交易详情。')
+    }
+
     await Promise.all([refreshMarketplace(), refreshLibrary(), refreshHistory()])
     setNotice('success', `Token #${tokenId.toString()} 购买完成。`)
+    void addNftToWallet(contractAddress, tokenId.toString())
   } catch (error) {
-    const message = error instanceof Error ? error.message : '购买失败。'
-    setNotice('error', message)
+    setNotice('error', parseBuyError(error))
   } finally {
     state.busyMessage = null
     render()
   }
+}
+
+function parseBuyError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+
+  if (raw.includes('MarketplaceNotApproved')) {
+    return '市场合约未获得该证书的转移授权。请联系卖家重新授权后再试。'
+  }
+  if (raw.includes('NotListed')) {
+    return '该证书当前未挂牌出售，可能已被卖家下架或已被他人购买。'
+  }
+  if (raw.includes('IncorrectPayment')) {
+    return '支付金额与挂牌价格不匹配。请刷新市场后重试。'
+  }
+  if (raw.includes('SelfPurchase')) {
+    return '不能购买自己发布的证书。'
+  }
+  if (raw.includes('NotTokenOwner')) {
+    return '卖家已不再持有该证书。请刷新市场查看最新状态。'
+  }
+
+  return raw.length > 200 ? '购买失败。请检查控制台日志了解详情。' : raw
 }
 
 async function cancelListing(tokenId: bigint) {
@@ -822,34 +964,105 @@ async function cancelListing(tokenId: bigint) {
   }
 }
 
-async function addPublishedNftToWallet() {
-  if (!state.publishResult) return
-  if (!window.ethereum) {
-    throw new Error('未检测到浏览器钱包。请先安装或打开 MetaMask。')
+async function burnToken(tokenId: bigint) {
+  if (!window.confirm(`确定要销毁 Token #${tokenId.toString()} 吗？此操作不可撤销。`)) return
+
+  const wallet = await ensureWallet()
+
+  setBusy(`正在销毁 Token #${tokenId.toString()}...`)
+
+  try {
+    const hash = await wallet.walletClient.writeContract({
+      account: wallet.account,
+      chain: wallet.chain,
+      address: readRequiredContractAddress(),
+      abi: CONTRACT_ABI,
+      functionName: 'burn',
+      args: [tokenId],
+    })
+
+    await publicClient.waitForTransactionReceipt({ hash })
+    await Promise.all([refreshMarketplace(), refreshLibrary()])
+    setNotice('success', `Token #${tokenId.toString()} 已销毁。`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '销毁失败。'
+    setNotice('error', message)
+  } finally {
+    state.busyMessage = null
+    render()
   }
+}
 
-  await ensureWallet()
+async function relistToken(tokenId: bigint) {
+  const priceStr = window.prompt('请输入挂牌价格（ETH）：', '0.1')
+  if (!priceStr) return
 
-  const contractAddress = readRequiredContractAddress()
-  const wasAdded = await window.ethereum.request({
-    method: 'wallet_watchAsset',
-    params: [
-      {
-        type: 'ERC721',
-        options: {
-          address: contractAddress,
-          tokenId: state.publishResult.tokenId,
-        },
-      },
-    ],
-  })
-
-  if (wasAdded) {
-    setNotice('success', `已请求 MetaMask 添加 Token #${state.publishResult.tokenId}。`)
+  let price: bigint
+  try {
+    price = parseEther(priceStr)
+    if (price <= 0n) throw new Error()
+  } catch {
+    setNotice('error', '请输入有效的价格。')
     return
   }
 
-  setNotice('info', 'MetaMask 未确认添加该 NFT。你也可以在钱包里手动导入合约地址和 Token ID。')
+  const wallet = await ensureWallet()
+  const contractAddress = readRequiredContractAddress()
+
+  setBusy(`正在上架 Token #${tokenId.toString()}...`)
+
+  try {
+    const approveHash = await wallet.walletClient.writeContract({
+      account: wallet.account,
+      chain: wallet.chain,
+      address: contractAddress,
+      abi: CONTRACT_ABI,
+      functionName: 'approve',
+      args: [contractAddress, tokenId],
+    })
+    await publicClient.waitForTransactionReceipt({ hash: approveHash })
+
+    const listHash = await wallet.walletClient.writeContract({
+      account: wallet.account,
+      chain: wallet.chain,
+      address: contractAddress,
+      abi: CONTRACT_ABI,
+      functionName: 'listForSale',
+      args: [tokenId, price],
+    })
+    await publicClient.waitForTransactionReceipt({ hash: listHash })
+
+    await Promise.all([refreshMarketplace(), refreshLibrary()])
+    setNotice('success', `Token #${tokenId.toString()} 已上架，价格 ${priceStr} ETH。`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : '上架失败。'
+    setNotice('error', message)
+  } finally {
+    state.busyMessage = null
+    render()
+  }
+}
+
+async function addNftToWallet(contractAddress: string, tokenId: string) {
+  if (!window.ethereum) return
+
+  try {
+    await ensureWallet()
+    await window.ethereum.request({
+      method: 'wallet_watchAsset',
+      params: [
+        {
+          type: 'ERC721',
+          options: {
+            address: contractAddress,
+            tokenId,
+          },
+        },
+      ],
+    })
+  } catch {
+    // wallet_watchAsset may not be supported — MetaMask auto-detection handles it on Sepolia.
+  }
 }
 
 async function downloadEncrypted(uri: string) {
@@ -990,11 +1203,6 @@ root.addEventListener('click', async (event) => {
       return
     }
 
-    if (action === 'add-nft-to-wallet') {
-      await addPublishedNftToWallet()
-      return
-    }
-
     if (action === 'buy') {
       await buyCertificate(BigInt(button.dataset.tokenId || '0'), BigInt(button.dataset.price || '0'))
       return
@@ -1002,6 +1210,21 @@ root.addEventListener('click', async (event) => {
 
     if (action === 'cancel-listing') {
       await cancelListing(BigInt(button.dataset.tokenId || '0'))
+      return
+    }
+
+    if (action === 'burn-token') {
+      await burnToken(BigInt(button.dataset.tokenId || '0'))
+      return
+    }
+
+    if (action === 'relist-token') {
+      await relistToken(BigInt(button.dataset.tokenId || '0'))
+      return
+    }
+
+    if (action === 'withdraw') {
+      await withdrawBalance()
       return
     }
 

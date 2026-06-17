@@ -24,6 +24,8 @@ contract ContentNFTMarketplace is ERC721URIStorage, ERC721Royalty, ReentrancyGua
         string encryptedContentURI;
         string previewURI;
         bytes32 contentHash;
+        string encryptedAccessKey;
+        uint64 perceptualHash;
     }
 
     struct Listing {
@@ -80,6 +82,7 @@ contract ContentNFTMarketplace is ERC721URIStorage, ERC721Royalty, ReentrancyGua
     );
     event Withdrawn(address indexed recipient, uint256 amount);
     event PlatformFeeUpdated(uint96 newFeeBps);
+    event Burned(uint256 indexed tokenId, address indexed owner);
 
     constructor(uint96 initialPlatformFeeBps, address initialOwner)
         ERC721("ContentCertificate", "CERT")
@@ -95,7 +98,9 @@ contract ContentNFTMarketplace is ERC721URIStorage, ERC721Royalty, ReentrancyGua
         string calldata previewURI,
         bytes32 contentHash,
         ContentType contentType,
-        uint96 royaltyBps
+        uint96 royaltyBps,
+        string calldata encryptedAccessKey,
+        uint64 perceptualHash
     ) external returns (uint256 tokenId) {
         if (bytes(metadataURI).length == 0) revert MetadataURIRequired();
         if (bytes(encryptedContentURI).length == 0) revert EncryptedContentURIRequired();
@@ -118,7 +123,9 @@ contract ContentNFTMarketplace is ERC721URIStorage, ERC721Royalty, ReentrancyGua
             metadataURI: metadataURI,
             encryptedContentURI: encryptedContentURI,
             previewURI: previewURI,
-            contentHash: contentHash
+            contentHash: contentHash,
+            encryptedAccessKey: encryptedAccessKey,
+            perceptualHash: perceptualHash
         });
         _tokenIdByContentHash[contentHash] = tokenId;
 
@@ -142,6 +149,20 @@ contract ContentNFTMarketplace is ERC721URIStorage, ERC721Royalty, ReentrancyGua
 
         delete _listings[tokenId];
         emit ListingCancelled(tokenId, msg.sender);
+    }
+
+    function burn(uint256 tokenId) external {
+        if (ownerOf(tokenId) != msg.sender) revert NotTokenOwner();
+        if (_listings[tokenId].isActive) revert AlreadyListed();
+
+        bytes32 hash = _contentMetadata[tokenId].contentHash;
+        if (hash != bytes32(0)) {
+            delete _tokenIdByContentHash[hash];
+        }
+        delete _contentMetadata[tokenId];
+
+        _burn(tokenId);
+        emit Burned(tokenId, msg.sender);
     }
 
     function buy(uint256 tokenId) external payable nonReentrant {
@@ -235,12 +256,16 @@ contract ContentNFTMarketplace is ERC721URIStorage, ERC721Royalty, ReentrancyGua
     }
 
     function getContentMetadata(uint256 tokenId) external view returns (ContentMetadata memory) {
-        _requireOwned(tokenId);
+        if (_contentMetadata[tokenId].creator == address(0)) revert InvalidContentHash();
         return _contentMetadata[tokenId];
     }
 
     function getListing(uint256 tokenId) external view returns (Listing memory) {
         return _listings[tokenId];
+    }
+
+    function getPerceptualHash(uint256 tokenId) external view returns (uint64) {
+        return _contentMetadata[tokenId].perceptualHash;
     }
 
     function tokenURI(

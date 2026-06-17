@@ -22,9 +22,12 @@ declare global {
   }
 }
 
-const tenderlyVirtualSepolia = defineChain({
-  id: 99911155111,
-  name: 'Tenderly 虚拟 Sepolia',
+const tenderlyRpcUrl = import.meta.env.VITE_TENDERLY_RPC_URL || ''
+const tenderlyChainId = Number(import.meta.env.VITE_CHAIN_ID || '31337')
+
+const tenderlyVirtual = defineChain({
+  id: tenderlyChainId,
+  name: 'Tenderly 虚拟测试网',
   nativeCurrency: {
     decimals: 18,
     name: 'Ether',
@@ -32,10 +35,7 @@ const tenderlyVirtualSepolia = defineChain({
   },
   rpcUrls: {
     default: {
-      http: [
-        import.meta.env.VITE_TENDERLY_RPC_URL
-          || 'https://virtual.sepolia.eu.rpc.tenderly.co/b1bfb292-efb9-4c44-b90f-6bf3b3480dd3',
-      ],
+      http: [tenderlyRpcUrl],
     },
   },
   blockExplorers: {
@@ -70,7 +70,11 @@ const anvilLocal = defineChain({
 })
 
 const configuredChainId = Number(import.meta.env.VITE_CHAIN_ID || '31337')
-const supportedChains = [anvilLocal, sepolia, tenderlyVirtualSepolia] as const
+const sepoliaRpcUrl = import.meta.env.VITE_SEPOLIA_RPC_URL || ''
+const sepoliaWithCustomRpc = sepoliaRpcUrl
+  ? { ...sepolia, rpcUrls: { default: { http: [sepoliaRpcUrl] } } }
+  : sepolia
+const supportedChains = [anvilLocal, sepoliaWithCustomRpc, tenderlyVirtual] as const
 
 export type WalletConnection = {
   account: Address

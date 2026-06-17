@@ -182,6 +182,16 @@ a:hover {
   border-color: var(--line-strong);
 }
 
+.button--danger {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fca5a5;
+}
+
+.button--danger:hover {
+  background: #fee2e2;
+}
+
 .button:hover,
 .tab:hover {
   transform: translateY(-1px);

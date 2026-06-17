@@ -18,6 +18,8 @@ describe("ContentNFTMarketplace", function () {
       encryptedContentURI: "ipfs://encrypted-content-cid",
       previewURI: "ipfs://preview-cid",
       contentHash: ethers.keccak256(ethers.toUtf8Bytes("content-hash")),
+      encryptedAccessKey: '{"algorithm":"AES-GCM-256","key":"dGVzdC1rZXktYmFzZTY0","fileName":"test.txt","mimeType":"text/plain"}',
+      perceptualHash: 0xA1B2C3D4E5F67890n,
     }
   }
 
@@ -30,7 +32,9 @@ describe("ContentNFTMarketplace", function () {
         fixture.previewURI,
         fixture.contentHash,
         1,
-        1000
+        1000,
+        fixture.encryptedAccessKey,
+        fixture.perceptualHash
       )
 
     await tx.wait()
@@ -52,6 +56,8 @@ describe("ContentNFTMarketplace", function () {
     expect(stored.encryptedContentURI).to.equal(fixture.encryptedContentURI)
     expect(stored.previewURI).to.equal(fixture.previewURI)
     expect(stored.contentHash).to.equal(fixture.contentHash)
+    expect(stored.encryptedAccessKey).to.equal(fixture.encryptedAccessKey)
+    expect(stored.perceptualHash).to.equal(fixture.perceptualHash)
 
     const [receiver, amount] = await fixture.market.royaltyInfo(tokenId, ethers.parseEther("1"))
     expect(receiver).to.equal(fixture.creator.address)
@@ -159,10 +165,85 @@ describe("ContentNFTMarketplace", function () {
         "ipfs://another-preview",
         fixture.contentHash,
         1,
-        500
+        500,
+        fixture.encryptedAccessKey,
+        fixture.perceptualHash
       )
     )
       .to.be.revertedWithCustomError(fixture.market, "ContentAlreadyRegistered")
       .withArgs(1n)
+  })
+
+  it("allows new owner to read access key after purchase", async function () {
+    const fixture = await deployFixture()
+    const tokenId = await mintAsCreator(fixture)
+
+    await fixture.market.connect(fixture.creator).approve(await fixture.market.getAddress(), tokenId)
+    await fixture.market.connect(fixture.creator).listForSale(tokenId, ethers.parseEther("1"))
+    await fixture.market.connect(fixture.buyer).buy(tokenId, { value: ethers.parseEther("1") })
+
+    const stored = await fixture.market.connect(fixture.buyer).getContentMetadata(tokenId)
+    expect(stored.encryptedAccessKey).to.equal(fixture.encryptedAccessKey)
+    expect(stored.creator).to.equal(fixture.creator.address)
+  })
+
+  it("burns token and cleans up metadata", async function () {
+    const fixture = await deployFixture()
+    const tokenId = await mintAsCreator(fixture)
+
+    await fixture.market.connect(fixture.creator).burn(tokenId)
+
+    await expect(fixture.market.ownerOf(tokenId)).to.be.reverted
+    expect(await fixture.market.totalMinted()).to.equal(1n)
+
+    // Content hash is freed — can re-mint the same content
+    const tx2 = await fixture.market.connect(fixture.seller).mint(
+      "ipfs://new-metadata",
+      "ipfs://new-encrypted",
+      "ipfs://new-preview",
+      fixture.contentHash,
+      2,
+      500,
+      fixture.encryptedAccessKey,
+      fixture.perceptualHash
+    )
+    await tx2.wait()
+    expect(await fixture.market.ownerOf(2n)).to.equal(fixture.seller.address)
+  })
+
+  it("prevents burn while listed", async function () {
+    const fixture = await deployFixture()
+    const tokenId = await mintAsCreator(fixture)
+
+    await fixture.market.connect(fixture.creator).approve(await fixture.market.getAddress(), tokenId)
+    await fixture.market.connect(fixture.creator).listForSale(tokenId, ethers.parseEther("1"))
+
+    await expect(
+      fixture.market.connect(fixture.creator).burn(tokenId)
+    ).to.be.revertedWithCustomError(fixture.market, "AlreadyListed")
+  })
+
+  it("allows re-listing after cancel", async function () {
+    const fixture = await deployFixture()
+    const tokenId = await mintAsCreator(fixture)
+
+    await fixture.market.connect(fixture.creator).approve(await fixture.market.getAddress(), tokenId)
+    await fixture.market.connect(fixture.creator).listForSale(tokenId, ethers.parseEther("1"))
+    await fixture.market.connect(fixture.creator).cancelListing(tokenId)
+
+    // Re-list at a different price
+    await fixture.market.connect(fixture.creator).listForSale(tokenId, ethers.parseEther("2"))
+
+    const listing = await fixture.market.getListing(tokenId)
+    expect(listing.isActive).to.equal(true)
+    expect(listing.price).to.equal(ethers.parseEther("2"))
+  })
+
+  it("stores and retrieves perceptual hash", async function () {
+    const fixture = await deployFixture()
+    const tokenId = await mintAsCreator(fixture)
+
+    const hash = await fixture.market.getPerceptualHash(tokenId)
+    expect(hash).to.equal(fixture.perceptualHash)
   })
 })
